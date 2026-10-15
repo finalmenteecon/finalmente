@@ -161,17 +161,54 @@ def armar_mensaje(t, es_novedad):
 
 
 # ------------------------------------------------------------------ la base
+class ErrorBase(Exception):
+    """Un problema de configuración de Supabase, explicado en castellano."""
+
+
 class Base:
     def __init__(self, url, clave):
+        url, clave = url.strip(), clave.strip()
+        # el panel de Supabase a veces muestra la dirección con /rest/v1/ al final: se acepta igual
+        url = re.sub(r"/rest/v1/?$", "", url.rstrip("/"))
+        if not re.match(r"^https://[a-z0-9-]+\.supabase\.co/?$", url):
+            raise ErrorBase(
+                "SUPABASE_URL no tiene la forma https://<proyecto>.supabase.co. Si la copiaste de la barra del "
+                "navegador (supabase.com/dashboard/...), esa es la dirección del panel; la del proyecto está en "
+                "Project Settings > Data API, o en el botón Connect.")
+        if clave.startswith("sb_publishable_"):
+            raise ErrorBase("SUPABASE_KEY es la clave pública (publishable). Tiene que ser la secreta: sb_secret_...")
         self.api = url.rstrip("/") + "/rest/v1/publicaciones"
         self.h = {"apikey": clave, "Content-Type": "application/json"}
         if clave.startswith("eyJ"):  # las claves viejas son JWT y van también como Bearer
             self.h["Authorization"] = "Bearer " + clave
 
+    def _pedir(self, metodo, **kw):
+        try:
+            r = requests.request(metodo, self.api, timeout=30, **kw)
+        except requests.RequestException as err:
+            raise ErrorBase("No pude conectarme a Supabase (%s). Revisá SUPABASE_URL." % type(err).__name__)
+        if r.ok:
+            return r
+        try:
+            d = r.json()
+        except ValueError:
+            d = {}
+        codigo, detalle = d.get("code", ""), d.get("message") or r.text[:200]
+        if codigo == "PGRST205" or "does not exist" in detalle or "schema cache" in detalle:
+            pista = ("La tabla publicaciones no existe en este proyecto: corré supabase.sql en el SQL Editor "
+                     "del MISMO proyecto cuya URL cargaste.")
+        elif r.status_code == 401:
+            pista = "La clave no sirve: tiene que ser la secreta (sb_secret_... o service_role), copiada entera."
+        elif r.status_code == 403 or codigo == "42501":
+            pista = "La clave no tiene permiso sobre la tabla: tiene que ser la secreta, no la publishable."
+        elif r.status_code == 404:
+            pista = "Supabase no encontró la dirección: revisá que SUPABASE_URL sea la del proyecto."
+        else:
+            pista = ""
+        raise ErrorBase("Supabase respondió %d %s: %s. %s" % (r.status_code, codigo, detalle, pista))
+
     def _get(self, params):
-        r = requests.get(self.api, headers=self.h, params=params, timeout=20)
-        r.raise_for_status()
-        return r.json()
+        return self._pedir("GET", headers=self.h, params=params).json()
 
     def vacia(self):
         return len(self._get({"select": "id", "limit": "1"})) == 0
@@ -196,8 +233,7 @@ class Base:
                       campos=t["campos"], html_crudo=t["html_crudo"], fuente=URL, estado=estado)
                  for t in tarjetas]
         h = dict(self.h, Prefer="resolution=ignore-duplicates,return=minimal")
-        r = requests.post(self.api, headers=h, params={"on_conflict": "huella"}, data=json.dumps(filas), timeout=30)
-        r.raise_for_status()
+        self._pedir("POST", headers=h, params={"on_conflict": "huella"}, data=json.dumps(filas))
 
 
 # ------------------------------------------------------------------ Telegram
@@ -268,4 +304,10 @@ def corrida():
 
 
 if __name__ == "__main__":
-    prueba() if "--prueba" in sys.argv else corrida()
+    if "--prueba" in sys.argv:
+        prueba()
+    else:
+        try:
+            corrida()
+        except ErrorBase as err:
+            sys.exit("PROBLEMA CON SUPABASE: %s" % err)
