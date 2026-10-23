@@ -25,7 +25,7 @@ import requests
 from bs4 import BeautifulSoup
 
 URL = "https://www.econ.unicen.edu.ar/alumnos/ale/ofertas-ale-y-optativas"
-UA = "Mozilla/5.0 (compatible; FinalmenteBot/1.0; +mailto:finalmenteecon@gmail.com)"
+UA = "Mozilla/5.0 (compatible; FinalmenteBot/1.0; +mailto:contacto@finalmente.app)"
 
 PAGINAS_POR_CORRIDA = 2     # las 20 publicaciones más nuevas alcanzan para no perder nada
 PAGINAS_MAXIMAS = 15        # tope de la primera corrida, que guarda el historial entero
